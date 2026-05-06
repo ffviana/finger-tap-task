@@ -1,0 +1,8 @@
+TR=1.0
+frate=60.0
+sequence=['rest', 'move', 'rest', 'move', 'rest']
+block_trs=[10, 10, 10, 10, 10]
+instruction_trs=5
+initial_fixation_trs=5
+trigger_mode=kbd
+ABORT during_trigger_wait reason=escape

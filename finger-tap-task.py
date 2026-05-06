@@ -1,19 +1,29 @@
 #!/usr/bin/python
 """
-Simple TR-based finger movement task.
+Simple TR-based fingertapping task.
+
+Structure:
+- General instructions before trigger
+- After trigger:
+    - optional initial_fixation
+    - instruction before each block
+    - task block with fixation cross only
 
 Events:
-- rest: fixation cross only
-- move: fixation cross with a circle around it
+- rest: "Don't move"
+- move: "Do fingertapping when the cross appears"
 
-Keyboard mode:
-- First 't' starts the task.
-- Later 't' presses are logged as KEYBOARD_TRIGGER.
+All task blocks show only a fixation cross.
 
-Cedrus mode:
-- MRI triggers are logged through pyxid2.
+python finger-tap-task.py --TR 1.00 \
+  --sequence rest,move,rest,move,rest \
+  --block_trs 10,10,10,10,10 \
+  --instruction_trs 2 \
+  --initial_fixation_trs 2 \
+  --trigger_mode kbd
 
-ESC aborts anytime.
+python finger-tap-task.py --TR 1.00 --sequence rest,move,rest,move,rest --block_trs 10,10,10,10,10 --instruction_trs 5 --initial_fixation_trs 5 --trigger_mode kbd
+
 """
 
 from argparse import ArgumentParser
@@ -22,6 +32,13 @@ from datetime import datetime
 import numpy as np
 if not hasattr(np, "product"):
     np.product = np.prod
+
+# ---------------------------------------------------------------------
+# Font sizes
+# ---------------------------------------------------------------------
+FIXATION_HEIGHT = 0.12
+GENERAL_INSTRUCTION_HEIGHT = 0.12
+BLOCK_INSTRUCTION_HEIGHT = 0.12
 
 
 # ---------------------------------------------------------------------
@@ -35,26 +52,26 @@ def parse_csv_int(s):
     return [int(x.strip()) for x in s.split(",") if x.strip()]
 
 
-def validate_sequence(sequence, event_trs):
+def validate_sequence(sequence, block_trs):
     allowed = {"rest", "move"}
 
-    for event_name in sequence:
-        if event_name not in allowed:
-            raise ValueError(f"Unknown event '{event_name}'. Use only: rest, move.")
+    for block in sequence:
+        if block not in allowed:
+            raise ValueError(f"Unknown block '{block}'. Use only: rest, move.")
 
-    if len(sequence) != len(event_trs):
+    if len(sequence) != len(block_trs):
         raise ValueError(
-            f"--sequence has {len(sequence)} events, but --event_trs has "
-            f"{len(event_trs)} values."
+            f"--sequence has {len(sequence)} blocks, but --block_trs has "
+            f"{len(block_trs)} values."
         )
 
-    return sequence, event_trs
+    return sequence, block_trs
 
 
 # ---------------------------------------------------------------------
 # CLI arguments
 # ---------------------------------------------------------------------
-parser = ArgumentParser(description="Simple TR-based finger movement task")
+parser = ArgumentParser(description="Simple TR-based fingertapping task")
 
 parser.add_argument("--TR", type=float, default=3.35)
 parser.add_argument("--frate", type=float, default=60.0)
@@ -63,14 +80,26 @@ parser.add_argument(
     "--sequence",
     type=str,
     default="rest,move,rest,move,rest",
-    help="Comma-separated event sequence using rest/move.",
 )
 
 parser.add_argument(
-    "--event_trs",
+    "--block_trs",
     type=str,
     default="10,10,10,10,10",
-    help="Comma-separated TR durations for each event.",
+)
+
+parser.add_argument(
+    "--instruction_trs",
+    type=int,
+    default=2,
+    help="Duration of each block instruction screen, in TRs.",
+)
+
+parser.add_argument(
+    "--initial_fixation_trs",
+    type=int,
+    default=0,
+    help="Optional fixation period after trigger and before first instruction.",
 )
 
 parser.add_argument("--trigger_mode", choices=["kbd", "cedrus"], default="kbd")
@@ -80,8 +109,8 @@ parser.add_argument("--trigger_timeout", type=float, default=1e6)
 args = parser.parse_args()
 
 sequence = parse_csv_str(args.sequence)
-event_trs = parse_csv_int(args.event_trs)
-sequence, event_trs = validate_sequence(sequence, event_trs)
+block_trs = parse_csv_int(args.block_trs)
+sequence, block_trs = validate_sequence(sequence, block_trs)
 
 
 # =====================================================================
@@ -106,65 +135,11 @@ def log_line(msg):
         LOG_FH.write(msg + "\n")
 
 
-def check_for_abort():
-    if event.getKeys(keyList=["escape"]):
-        log_line(f"ABORT time={timer.getTime():.6f} reason=escape")
-        cli("Experiment aborted by user with ESC")
-        return True
-    return False
-
-
-# ---------------------------------------------------------------------
-# Cedrus helpers
-# ---------------------------------------------------------------------
-def get_cedrus_triggers(dev, mri_trigger_port):
-    triggers = []
-
-    dev.poll_for_response()
-
-    while dev.has_response():
-        response = dev.get_next_response()
-
-        if response.get("port", None) == mri_trigger_port:
-            log_line(
-                f"MRI_TRIGGER time={timer.getTime():.6f} raw={response}"
-            )
-            cli(f"MRI_TRIGGER {response}")
-            triggers.append(response)
-        else:
-            log_line(
-                f"DEVICE_RESPONSE time={timer.getTime():.6f} raw={response}"
-            )
-
-    return triggers
-
-
-def wait_for_cedrus_trigger(dev, mri_trigger_port, timeout):
-    dev.clear_response_queue()
-
-    wait_clock = core.Clock()
-
-    while wait_clock.getTime() < timeout:
-        if check_for_abort():
-            return False
-
-        triggers = get_cedrus_triggers(dev, mri_trigger_port)
-
-        if triggers:
-            log_line(f"START_TRIGGER mode=cedrus time={timer.getTime():.6f}")
-            cli("Cedrus start trigger received")
-            return True
-
-        core.wait(0.001)
-
-    return False
-
-
 # ---------------------------------------------------------------------
 # GUI and logfile
 # ---------------------------------------------------------------------
 expInfo = {"subject": "phtm", "run": 1}
-dlg = gui.DlgFromDict(expInfo, title="Finger movement task")
+dlg = gui.DlgFromDict(expInfo, title="Fingertapping task")
 
 if not dlg.OK:
     raise SystemExit(0)
@@ -172,7 +147,7 @@ if not dlg.OK:
 theDate = datetime.now()
 
 logFn = (
-    f"finger-move-s-{expInfo['subject']}-r-{expInfo['run']}-"
+    f"fingertapping-s-{expInfo['subject']}-r-{expInfo['run']}-"
     f"{theDate.strftime('%d%b%y')}.log"
 )
 
@@ -181,7 +156,9 @@ LOG_FH = open(logFn, "w", buffering=1)
 log_line(f"TR={args.TR}")
 log_line(f"frate={args.frate}")
 log_line(f"sequence={sequence}")
-log_line(f"event_trs={event_trs}")
+log_line(f"block_trs={block_trs}")
+log_line(f"instruction_trs={args.instruction_trs}")
+log_line(f"initial_fixation_trs={args.initial_fixation_trs}")
 log_line(f"trigger_mode={args.trigger_mode}")
 
 cli(f"Logging to: {logFn}")
@@ -204,74 +181,66 @@ fixation = visual.TextStim(
     win,
     text="+",
     pos=(0, 0),
-    height=0.12,
+    height=FIXATION_HEIGHT,
     color="white",
 )
 
-circle = visual.Circle(
+general_instruction_top = visual.TextStim(
     win,
-    radius=0.12,
-    edges=128,
-    lineWidth=4,
-    lineColor="white",
-    fillColor=None,
-    pos=(0, 0),
+    text=(
+        "You will see a cross at the center of the screen.\n"
+        "Keep your eyes focused on the cross during the entire experiment."
+    ),
+    pos=(0, 0.45),
+    height=GENERAL_INSTRUCTION_HEIGHT,
+    color="white",
+    wrapWidth=1.5,
+    alignText="center",
 )
 
-instruction_text = visual.TextStim(
+general_instruction_move = visual.TextStim(
     win,
-    text="Move your index finger when a circle appear around the cross",
-    pos=(0, 0.45),
-    height=0.06,
+    text=(
+        "When instructed to move,\n"
+        "repeatedly tap your\n"
+        "index finger against\n"
+        "your thumb until\n"
+        "further instruction."
+    ),
+    pos=(-0.45, -0.3),
+    height=GENERAL_INSTRUCTION_HEIGHT*.8,
+    color="white",
+    wrapWidth=0.7,
+    alignText="center",
+)
+
+general_instruction_rest = visual.TextStim(
+    win,
+    text=(
+        "When instructed not to move,\n"
+        "remain completely still\n"
+        "until further instruction."
+    ),
+    pos=(0.45, -0.3),
+    height=GENERAL_INSTRUCTION_HEIGHT*.8,
+    color="white",
+    wrapWidth=0.7,
+    alignText="center",
+)
+
+
+block_instruction = visual.TextStim(
+    win,
+    text="",
+    pos=(0, 0),
+    height=BLOCK_INSTRUCTION_HEIGHT,
     color="white",
     wrapWidth=1.5,
 )
 
-demo_cross_still = visual.TextStim(
-    win,
-    text="+",
-    pos=(-0.35, 0.05),
-    height=0.12,
-    color="white",
-)
-
-demo_label_still = visual.TextStim(
-    win,
-    text="stay still",
-    pos=(-0.35, -0.18),
-    height=0.045,
-    color="white",
-)
-
-demo_cross_move = visual.TextStim(
-    win,
-    text="+",
-    pos=(0.35, 0.05),
-    height=0.12,
-    color="white",
-)
-
-demo_circle_move = visual.Circle(
-    win,
-    radius=0.12,
-    edges=128,
-    lineWidth=4,
-    lineColor="white",
-    fillColor=None,
-    pos=(0.35, 0.05),
-)
-
-demo_label_move = visual.TextStim(
-    win,
-    text="move finger",
-    pos=(0.35, -0.18),
-    height=0.045,
-    color="white",
-)
-
 
 # ---------------------------------------------------------------------
-# Cedrus initialization
+# Cedrus helpers
 # ---------------------------------------------------------------------
 cedrus = None
 
@@ -293,9 +262,24 @@ if args.trigger_mode == "cedrus":
     cedrus.clear_response_queue()
 
 
-# ---------------------------------------------------------------------
-# Trigger polling during task
-# ---------------------------------------------------------------------
+def get_cedrus_triggers(dev):
+    triggers = []
+
+    dev.poll_for_response()
+
+    while dev.has_response():
+        response = dev.get_next_response()
+
+        if response.get("port", None) == args.mri_trigger_port:
+            log_line(f"MRI_TRIGGER time={timer.getTime():.6f} raw={response}")
+            cli(f"MRI_TRIGGER {response}")
+            triggers.append(response)
+        else:
+            log_line(f"DEVICE_RESPONSE time={timer.getTime():.6f} raw={response}")
+
+    return triggers
+
+
 def poll_triggers_during_task():
     keys = event.getKeys(keyList=["t", "escape"])
 
@@ -309,7 +293,7 @@ def poll_triggers_during_task():
         cli("KEYBOARD_TRIGGER")
 
     if cedrus is not None:
-        get_cedrus_triggers(cedrus, args.mri_trigger_port)
+        get_cedrus_triggers(cedrus)
 
     return True
 
@@ -317,70 +301,74 @@ def poll_triggers_during_task():
 # ---------------------------------------------------------------------
 # Drawing helpers
 # ---------------------------------------------------------------------
-def draw_instruction_screen():
-    instruction_text.draw()
-
-    demo_cross_still.draw()
-    demo_label_still.draw()
-
-    demo_circle_move.draw()
-    demo_cross_move.draw()
-    demo_label_move.draw()
+def draw_general_instruction():
+    general_instruction_top.draw()
+    general_instruction_move.draw()
+    general_instruction_rest.draw()
 
     win.flip()
 
-
-def draw_rest():
+def draw_fixation():
     fixation.draw()
 
 
-def draw_move():
-    circle.draw()
-    fixation.draw()
+def draw_block_instruction(block_type):
+    if block_type == "rest":
+        block_instruction.setText("Remain still")
+    elif block_type == "move":
+        block_instruction.setText("When the cross appears, repeatedly tap your index finger against your thumb")
+    else:
+        raise ValueError(f"Unknown block type: {block_type}")
+
+    block_instruction.draw()
 
 
 # ---------------------------------------------------------------------
-# Event runner
+# Timing helpers
 # ---------------------------------------------------------------------
-def run_event(event_type, tr_count, frame_idx):
-    nframes = int(round(tr_count * args.TR * args.frate))
+def trs_to_frames(trs):
+    return int(round(trs * args.TR * args.frate))
 
-    log_line(f"EVENT_BEGIN type={event_type} TRs={tr_count} frames={nframes}")
-    cli(f"EVENT_BEGIN type={event_type} TRs={tr_count}")
+
+def run_period(period_name, tr_count, frame_idx, draw_func, block_type=None):
+    if tr_count <= 0:
+        log_line(f"PERIOD_OMITTED name={period_name} TRs={tr_count}")
+        return frame_idx, True
+
+    nframes = trs_to_frames(tr_count)
+
+    log_line(
+        f"PERIOD_BEGIN name={period_name} "
+        f"block_type={block_type} TRs={tr_count} frames={nframes}"
+    )
+    cli(f"PERIOD_BEGIN name={period_name} block_type={block_type} TRs={tr_count}")
 
     for _ in range(nframes):
         if not poll_triggers_during_task():
             return frame_idx, False
 
-        if event_type == "rest":
-            draw_rest()
-        elif event_type == "move":
-            draw_move()
-        else:
-            raise ValueError(f"Unknown event type: {event_type}")
-
+        draw_func()
         log_line(
             f"FRAME frame={frame_idx} "
             f"time={timer.getTime():.6f} "
-            f"event={event_type} "
+            f"period={period_name} "
+            f"block_type={block_type} "
             f"TR={frame_idx // int(args.TR * args.frate)}"
         )
 
         win.flip()
         frame_idx += 1
 
-    log_line(f"EVENT_END type={event_type}")
-    cli(f"EVENT_END type={event_type}")
+    log_line(f"PERIOD_END name={period_name} block_type={block_type}")
+    cli(f"PERIOD_END name={period_name} block_type={block_type}")
 
     return frame_idx, True
 
 
 # ---------------------------------------------------------------------
-# Main experiment
+# Trigger wait
 # ---------------------------------------------------------------------
-try:
-    draw_instruction_screen()
-
+def wait_for_trigger():
     if args.trigger_mode == "kbd":
         cli("Waiting for keyboard start trigger: press 't'")
 
@@ -390,29 +378,53 @@ try:
             if "t" in keys:
                 log_line("START_TRIGGER mode=kbd")
                 cli("Keyboard start trigger received")
-                break
+                return True
 
             if "escape" in keys:
-                log_line("ABORT during trigger wait reason=escape")
+                log_line("ABORT during_trigger_wait reason=escape")
                 cli("Experiment aborted during trigger wait")
-                raise SystemExit(0)
+                return False
 
             core.wait(0.01)
 
-    else:
-        cli(f"Waiting for Cedrus MRI trigger, port={args.mri_trigger_port}")
-        log_line(f"Waiting for Cedrus MRI trigger, port={args.mri_trigger_port}")
+    cli(f"Waiting for Cedrus MRI trigger, port={args.mri_trigger_port}")
+    log_line(f"Waiting for Cedrus MRI trigger, port={args.mri_trigger_port}")
 
-        ok = wait_for_cedrus_trigger(
-            cedrus,
-            mri_trigger_port=args.mri_trigger_port,
-            timeout=args.trigger_timeout,
-        )
+    cedrus.clear_response_queue()
+    wait_clock = core.Clock()
 
-        if not ok:
-            log_line("MRI trigger timeout or abort")
-            cli("MRI trigger timeout or abort")
-            raise SystemExit(0)
+    while wait_clock.getTime() < args.trigger_timeout:
+        keys = event.getKeys(keyList=["escape"])
+
+        if "escape" in keys:
+            log_line("ABORT during_trigger_wait reason=escape")
+            cli("Experiment aborted during trigger wait")
+            return False
+
+        triggers = get_cedrus_triggers(cedrus)
+
+        if triggers:
+            log_line("START_TRIGGER mode=cedrus")
+            cli("Cedrus start trigger received")
+            return True
+
+        core.wait(0.001)
+
+    log_line("MRI_TRIGGER_TIMEOUT")
+    cli("MRI trigger timeout")
+    return False
+
+
+# ---------------------------------------------------------------------
+# Main experiment
+# ---------------------------------------------------------------------
+try:
+    draw_general_instruction()
+
+    ok = wait_for_trigger()
+
+    if not ok:
+        raise SystemExit(0)
 
     timer.reset()
     log_line("EXPERIMENT_START time=0.000000")
@@ -420,8 +432,36 @@ try:
 
     frame_idx = 0
 
-    for event_type, tr_count in zip(sequence, event_trs):
-        frame_idx, ok = run_event(event_type, tr_count, frame_idx)
+    frame_idx, ok = run_period(
+        period_name="initial_fixation",
+        tr_count=args.initial_fixation_trs,
+        frame_idx=frame_idx,
+        draw_func=draw_fixation,
+        block_type="fixation",
+    )
+
+    if not ok:
+        raise SystemExit(0)
+
+    for block_type, tr_count in zip(sequence, block_trs):
+        frame_idx, ok = run_period(
+            period_name="instruction",
+            tr_count=args.instruction_trs,
+            frame_idx=frame_idx,
+            draw_func=lambda bt=block_type: draw_block_instruction(bt),
+            block_type=block_type,
+        )
+
+        if not ok:
+            raise SystemExit(0)
+
+        frame_idx, ok = run_period(
+            period_name="task_block",
+            tr_count=tr_count,
+            frame_idx=frame_idx,
+            draw_func=draw_fixation,
+            block_type=block_type,
+        )
 
         if not ok:
             raise SystemExit(0)
