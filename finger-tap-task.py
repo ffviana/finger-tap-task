@@ -6,12 +6,12 @@ Events:
 - rest: fixation cross only
 - move: fixation cross with a circle around it
 
-Before trigger wait, shows instructions:
-"Move your index finger when a circle appear around the cross"
+Keyboard mode:
+- First 't' starts the task.
+- Later 't' presses are logged as KEYBOARD_TRIGGER.
 
-Trigger modes:
-- --trigger_mode kbd    -> press 't'
-- --trigger_mode cedrus -> Cedrus / pyxid2 MRI trigger
+Cedrus mode:
+- MRI triggers are logged through pyxid2.
 
 ESC aborts anytime.
 """
@@ -38,9 +38,9 @@ def parse_csv_int(s):
 def validate_sequence(sequence, event_trs):
     allowed = {"rest", "move"}
 
-    for event in sequence:
-        if event not in allowed:
-            raise ValueError(f"Unknown event '{event}'. Use only: rest, move.")
+    for event_name in sequence:
+        if event_name not in allowed:
+            raise ValueError(f"Unknown event '{event_name}'. Use only: rest, move.")
 
     if len(sequence) != len(event_trs):
         raise ValueError(
@@ -94,6 +94,7 @@ from psychopy import visual, core, event, gui
 # Logging
 # ---------------------------------------------------------------------
 LOG_FH = None
+timer = core.Clock()
 
 
 def cli(msg):
@@ -107,7 +108,7 @@ def log_line(msg):
 
 def check_for_abort():
     if event.getKeys(keyList=["escape"]):
-        log_line("Experiment aborted by user with ESC")
+        log_line(f"ABORT time={timer.getTime():.6f} reason=escape")
         cli("Experiment aborted by user with ESC")
         return True
     return False
@@ -125,11 +126,15 @@ def get_cedrus_triggers(dev, mri_trigger_port):
         response = dev.get_next_response()
 
         if response.get("port", None) == mri_trigger_port:
-            log_line(f"MRI_TRIGGER {response}")
+            log_line(
+                f"MRI_TRIGGER time={timer.getTime():.6f} raw={response}"
+            )
             cli(f"MRI_TRIGGER {response}")
             triggers.append(response)
         else:
-            log_line(f"DEVICE_RESPONSE {response}")
+            log_line(
+                f"DEVICE_RESPONSE time={timer.getTime():.6f} raw={response}"
+            )
 
     return triggers
 
@@ -137,17 +142,17 @@ def get_cedrus_triggers(dev, mri_trigger_port):
 def wait_for_cedrus_trigger(dev, mri_trigger_port, timeout):
     dev.clear_response_queue()
 
-    clock = core.Clock()
+    wait_clock = core.Clock()
 
-    while clock.getTime() < timeout:
+    while wait_clock.getTime() < timeout:
         if check_for_abort():
             return False
 
         triggers = get_cedrus_triggers(dev, mri_trigger_port)
 
         if triggers:
-            log_line("MRI trigger received")
-            cli("MRI trigger received")
+            log_line(f"START_TRIGGER mode=cedrus time={timer.getTime():.6f}")
+            cli("Cedrus start trigger received")
             return True
 
         core.wait(0.001)
@@ -288,9 +293,25 @@ if args.trigger_mode == "cedrus":
     cedrus.clear_response_queue()
 
 
-def poll_cedrus_during_task():
+# ---------------------------------------------------------------------
+# Trigger polling during task
+# ---------------------------------------------------------------------
+def poll_triggers_during_task():
+    keys = event.getKeys(keyList=["t", "escape"])
+
+    if "escape" in keys:
+        log_line(f"ABORT time={timer.getTime():.6f} reason=escape")
+        cli("Experiment aborted by user with ESC")
+        return False
+
+    if args.trigger_mode == "kbd" and "t" in keys:
+        log_line(f"KEYBOARD_TRIGGER time={timer.getTime():.6f}")
+        cli("KEYBOARD_TRIGGER")
+
     if cedrus is not None:
         get_cedrus_triggers(cedrus, args.mri_trigger_port)
+
+    return True
 
 
 # ---------------------------------------------------------------------
@@ -321,9 +342,6 @@ def draw_move():
 # ---------------------------------------------------------------------
 # Event runner
 # ---------------------------------------------------------------------
-timer = core.Clock()
-
-
 def run_event(event_type, tr_count, frame_idx):
     nframes = int(round(tr_count * args.TR * args.frate))
 
@@ -331,10 +349,8 @@ def run_event(event_type, tr_count, frame_idx):
     cli(f"EVENT_BEGIN type={event_type} TRs={tr_count}")
 
     for _ in range(nframes):
-        if check_for_abort():
+        if not poll_triggers_during_task():
             return frame_idx, False
-
-        poll_cedrus_during_task()
 
         if event_type == "rest":
             draw_rest()
@@ -366,18 +382,18 @@ try:
     draw_instruction_screen()
 
     if args.trigger_mode == "kbd":
-        cli("Waiting for keyboard trigger: press 't'")
+        cli("Waiting for keyboard start trigger: press 't'")
 
         while True:
-            keys = event.getKeys()
+            keys = event.getKeys(keyList=["t", "escape"])
 
             if "t" in keys:
-                log_line("Keyboard trigger received")
-                cli("Keyboard trigger received")
+                log_line("START_TRIGGER mode=kbd")
+                cli("Keyboard start trigger received")
                 break
 
             if "escape" in keys:
-                log_line("Experiment aborted during trigger wait")
+                log_line("ABORT during trigger wait reason=escape")
                 cli("Experiment aborted during trigger wait")
                 raise SystemExit(0)
 
@@ -399,7 +415,7 @@ try:
             raise SystemExit(0)
 
     timer.reset()
-    log_line("Experiment started")
+    log_line("EXPERIMENT_START time=0.000000")
     cli("Experiment started")
 
     frame_idx = 0
@@ -410,7 +426,7 @@ try:
         if not ok:
             raise SystemExit(0)
 
-    log_line("Experiment finished")
+    log_line("EXPERIMENT_END")
     cli("Experiment finished")
 
 finally:
