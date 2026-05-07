@@ -1,0 +1,17 @@
+# BIDS ignore file
+# Files/folders listed here will be ignored by BIDS validation
+
+# Version control
+.git/
+.gitignore
+
+# Code and analysis
+code/
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
