@@ -22,7 +22,7 @@ python finger-tap-task.py --TR 1.00 \
   --initial_fixation_trs 2 \
   --trigger_mode kbd
 
-python finger-tap-task.py --TR 1.50 --sequence rest,move,rest,move,rest,move,rest,move,rest,move --block_trs 20,20,20,20,20,20,20,20,20,20 --instruction_trs 4 --initial_fixation_trs 4 --trigger_mode kbd
+python finger-tap-task.py --TR 1 --sequence rest,move,rest --block_trs 5,5,5 --instruction_trs 4 --initial_fixation_trs 4 --trigger_mode kbd
 python finger-tap-task.py --TR 1.50 --sequence rest,move,rest,move,rest,move,rest,move,rest,move,rest --block_trs 20,20,20,20,20,20,20,20,20,20,4 --instruction_trs 4 --initial_fixation_trs 4 --trigger_mode cedrus
 
 """
