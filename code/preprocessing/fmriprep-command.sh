@@ -10,7 +10,7 @@ fs_license='/home/francisco/freesurfer/license.txt'
 
 mkdir -p "$derivs" "$logs"
 
-subs=$(printf "sub-esbs%02d\n" 1)
+subs=$(printf "sub-%02d\n" 1)
 # subs=$(printf "sub-21\n")
 
 for sub in $subs; do
@@ -23,11 +23,11 @@ for sub in $subs; do
     -v "$fs_license:/opt/freesurfer/license.txt:ro" \
     nipreps/fmriprep:25.2.5 \
     /data /out participant \
-    --participant-label "${sub#sub-}" \
-    --me-output-echos \
-    --fs-no-reconall \
-    --me-t2s-fit-method loglin \
-    --n_cpus 32 \
+    --nprocs 6 \
+    --omp-nthreads 4 \
+    --mem-mb 200000 \
+    --aggregate-session-reports 12 \
+    --output-spaces MNI152NLin6Asym:res-02 \
     --fs-license-file /opt/freesurfer/license.txt \
     2>&1 | tee "$logs/fmriprep_${sub}.stdout"
 done
